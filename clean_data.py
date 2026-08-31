@@ -1,126 +1,282 @@
-# clean_data.py
-import pandas as pd
+"""Cleans and enriches the raw Montgomery County-style traffic violations export.
+
+Run directly to produce cleaned_traffic.parquet from raw_traffic.csv:
+    python clean_data.py
+
+Note on scope: this particular export does not include stop date/time,
+agency/location, geolocation, or search-related columns (they're part of
+the full public dataset this project is modeled on, but weren't present
+in raw_traffic.csv). Everything below only cleans what's actually here -
+see README.md for the full list of what that means for the dashboard.
+"""
+
+import sys
+
 import numpy as np
+import pandas as pd
+
+RAW_FILE = "raw_traffic.csv"
+OUTPUT_FILE = "cleaned_traffic.parquet"
+
+# Yes/No style columns that exist in this export. The full dataset also has
+# Fatal, HAZMAT, Alcohol and Work Zone flags, but those columns never made it
+# into raw_traffic.csv, so they're left out here rather than faked.
+BOOLEAN_COLUMNS = [
+    "belts",
+    "personal_injury",
+    "property_damage",
+    "commercial_license",
+    "commercial_vehicle",
+    "contributed_to_accident",
+]
+
+STATE_COLUMNS = ["state", "driver_state", "dl_state"]
+
+# Codes seen in the data that aren't real jurisdictions - "XX" shows up as a
+# catch-all unknown and "US" is clearly a data entry mistake. Canadian
+# provinces (ON, QC, MB, ...) are left alone since those are legitimate
+# out-of-country drivers, not junk.
+INVALID_STATE_CODES = {"XX", "US"}
+
+# Common abbreviations/misspellings of vehicle makes found in this export.
+# Not exhaustive - just the ones that show up often enough to matter for the
+# "top makes" chart in the dashboard.
+MAKE_ALIASES = {
+    "TOYT": "TOYOTA",
+    "HOND": "HONDA",
+    "CHEV": "CHEVROLET",
+    "CHEVY": "CHEVROLET",
+    "NISS": "NISSAN",
+    "HYUN": "HYUNDAI",
+    "MERZ": "MERCEDES-BENZ",
+    "MERCEDES": "MERCEDES-BENZ",
+    "VOLK": "VOLKSWAGEN",
+    "VW": "VOLKSWAGEN",
+    "ACUR": "ACURA",
+    "INFI": "INFINITI",
+    "MITS": "MITSUBISHI",
+}
+
+MIN_VEHICLE_YEAR = 1960
+MAX_VEHICLE_YEAR = 2025
+
+# Body-style shorthand that shows up in the Model column instead of an actual
+# model name - looks like officers fell back to this when they didn't know
+# the specific model. Not a real model, so it shouldn't win "most cited model".
+GENERIC_MODEL_CODES = {
+    "4S", "2S", "4D", "4DR", "2D", "2DR", "4 DOOR", "2 DOOR",
+    "SUV", "VN", "VAN", "SW", "TK", "TRUCK", "SU",
+}
+
+
+def load_raw_data(path=RAW_FILE):
+    """Read the raw CSV export. Bails out with a clear message if it's missing."""
+    try:
+        df = pd.read_csv(path, low_memory=False)
+    except FileNotFoundError:
+        sys.exit(f"Could not find {path} - make sure it's in the project folder.")
+    print(f"Loaded {len(df):,} rows from {path}")
+    return df
+
+
+def normalize_column_names(df):
+    """lowercase_with_underscores instead of 'Personal.Injury' / 'Driver City'."""
+    df.columns = (
+        df.columns.str.strip()
+        .str.lower()
+        .str.replace(".", "_", regex=False)
+        .str.replace(r"\s+", "_", regex=True)
+    )
+    return df
+
+
+def drop_duplicate_rows(df):
+    """Full-row duplicates showed up in the raw export - most likely re-exported
+    or double-scanned records rather than two separate stops that happen to
+    match on every single field."""
+    before = len(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    removed = before - len(df)
+    if removed:
+        print(f"Removed {removed} duplicate rows")
+    return df
+
+
+def clean_boolean_columns(df):
+    """Map the Yes/No/Y/N text columns to real booleans.
+
+    Anything that isn't a recognized Yes/No spelling is left as missing
+    (NaN) rather than silently treated as False - a blank isn't the same
+    thing as a confirmed "no accident happened".
+    """
+    yes_no_map = {
+        "yes": True, "y": True,
+        "no": False, "n": False,
+    }
+    for col in BOOLEAN_COLUMNS:
+        if col not in df.columns:
+            print(f"Note: expected boolean column '{col}' not found, skipping")
+            continue
+        mapped = df[col].astype(str).str.strip().str.lower().map(yes_no_map)
+        unmapped = df[col].notna() & mapped.isna()
+        if unmapped.any():
+            bad_values = df.loc[unmapped, col].unique()
+            print(f"'{col}': {unmapped.sum()} rows had unrecognized values {list(bad_values)[:5]}")
+        df[col] = mapped
+    return df
+
+
+def clean_state_codes(df):
+    """Uppercase state/jurisdiction codes and null out the known junk values."""
+    for col in STATE_COLUMNS:
+        if col not in df.columns:
+            continue
+        df[col] = df[col].astype(str).str.strip().str.upper()
+        df[col] = df[col].replace("NAN", np.nan)
+        df.loc[df[col].isin(INVALID_STATE_CODES), col] = np.nan
+    return df
+
+
+def clean_vehicle_year(df):
+    """Vehicle model years outside a sane range (pre-1960 or newer than the
+    dataset itself) are almost certainly typos - e.g. a stray digit turning
+    2013 into 1013, or a placeholder like 0 / 9999 for "not entered"."""
+    if "year" not in df.columns:
+        return df
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    out_of_range = ~df["year"].between(MIN_VEHICLE_YEAR, MAX_VEHICLE_YEAR)
+    invalid_count = (out_of_range & df["year"].notna()).sum()
+    if invalid_count:
+        print(f"Blanked out {invalid_count} out-of-range vehicle years")
+    df.loc[out_of_range, "year"] = np.nan
+    return df
+
+
+def standardize_make(df):
+    """Collapse the obvious abbreviation duplicates (TOYT/TOYOTA, HOND/HONDA, ...)
+    so the "top makes" chart doesn't split one manufacturer across rows."""
+    if "make" not in df.columns:
+        return df
+    df["make"] = df["make"].astype(str).str.strip().str.upper()
+    df["make"] = df["make"].replace(MAKE_ALIASES)
+    return df
+
+
+def clean_vehicle_model(df):
+    """Null out generic body-style codes (4S, TK, VAN, ...) so they don't
+    masquerade as a real model in the "most cited model" stats - a real
+    model name and a body-style shorthand shouldn't compete in the same
+    ranking."""
+    if "model" not in df.columns:
+        return df
+    df["model"] = df["model"].astype(str).str.strip().str.upper()
+    df.loc[df["model"].isin(GENERIC_MODEL_CODES), "model"] = np.nan
+    return df
+
+
+def categorize_violation(description):
+    """Bucket the free-text violation description into a handful of groups
+    used throughout the dashboard. Order matters here - e.g. we check for
+    "speed" before the more generic buckets so a description mentioning both
+    speeding and a plate issue still lands under Speeding."""
+    if pd.isna(description):
+        return "Unknown"
+
+    text = str(description).lower()
+
+    if "speed" in text or "exceeding" in text:
+        return "Speeding"
+    if "red light" in text or "traffic signal" in text:
+        return "Red Light / Signal"
+    if ("registration" in text or "expired" in text) and "plate" in text:
+        return "Registration / Plate"
+    if "license" in text or "suspended" in text:
+        return "License / Suspended"
+    if "seatbelt" in text or "belt" in text or "restrained" in text:
+        return "Seatbelt"
+    if "stop sign" in text:
+        return "Stop Sign"
+    if "alcohol" in text or "influence" in text:
+        return "DUI / Alcohol"
+    return "Other"
+
+
+def add_accident_severity(df):
+    """Roll the three accident-related flags into one ordinal severity label,
+    worst outcome wins. Rows missing all three flags stay Unknown instead of
+    being counted as "None" - we don't actually know what happened there.
+    """
+    injury = df.get("personal_injury")
+    damage = df.get("property_damage")
+    contributed = df.get("contributed_to_accident")
+
+    if injury is None or damage is None or contributed is None:
+        return df
+
+    all_missing = injury.isna() & damage.isna() & contributed.isna()
+    severity = np.select(
+        [
+            injury.fillna(False),
+            damage.fillna(False),
+            contributed.fillna(False),
+        ],
+        ["Personal Injury", "Property Damage", "Accident (No Injury/Damage Noted)"],
+        default="No Accident",
+    )
+    severity = pd.Series(severity, index=df.index)
+    severity[all_missing] = "Unknown"
+    df["accident_severity"] = severity
+    return df
+
+
+def engineer_features(df):
+    """Everything derived rather than read straight from the source columns."""
+    if "description" in df.columns:
+        df["violation_group"] = df["description"].apply(categorize_violation)
+
+    df = add_accident_severity(df)
+
+    # Per-make violation counts - useful for the "which vehicles show up most"
+    # question without re-aggregating in the dashboard every time.
+    if "make" in df.columns:
+        make_counts = df["make"].value_counts()
+        df["make_violation_count"] = df["make"].map(make_counts)
+
+    return df
+
+
+def optimize_dtypes(df):
+    """Low-cardinality text columns are stored as category dtype instead of
+    plain object strings - same values, a lot less memory on ~70k rows."""
+    categorical_candidates = [
+        "state", "driver_state", "dl_state", "race", "gender", "vehicletype",
+        "violation_type", "arrest_type", "violation_group", "accident_severity",
+    ]
+    for col in categorical_candidates:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+
+    if "year" in df.columns:
+        df["year"] = df["year"].astype("Int32")  # nullable int, keeps NaNs
+
+    return df
+
 
 def clean_traffic_data():
-    print("Reading raw data...")
-    # Read the file - assuming first row is header
-    df = pd.read_csv("raw_traffic.csv", low_memory=False)
-    
-    print(f"Original rows: {len(df):,}")
-    print("\nOriginal columns:", df.columns.tolist())
-    
-    # Standardize column names: lower case, replace spaces and dots with underscore
-    df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(r'\s+', '_', regex=True)
-        .str.replace('.', '_', regex=False)
-    )
-    
-    print("\nNormalized columns:", df.columns.tolist())
-    
-    # ── Try to find and convert date/time if they exist ───────────────────────
-    # In your sample, there is NO date/time column → we skip or create dummy if needed
-    date_col = None
-    time_col = None
-    
-    possible_date_cols = [c for c in df.columns if 'date' in c]
-    possible_time_cols = [c for c in df.columns if 'time' in c]
-    
-    if possible_date_cols:
-        date_col = possible_date_cols[0]
-        print(f"Using date column: {date_col}")
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-    else:
-        print("Warning: No date column found → datetime features will be skipped")
-    
-    if possible_time_cols:
-        time_col = possible_time_cols[0]
-        print(f"Using time column: {time_col}")
-        # Very simple time parsing - adjust if format is unusual
-        def parse_time(val):
-            if pd.isna(val):
-                return pd.NaT
-            try:
-                return pd.to_datetime(str(val).strip(), format='%H:%M:%S', errors='coerce').time()
-            except:
-                return pd.NaT
-        
-        df[time_col] = df[time_col].apply(parse_time)
-    
-    # If we have both date and time → create datetime
-    if date_col and time_col:
-        df['datetime'] = pd.to_datetime(
-            df[date_col].astype(str) + ' ' + df[time_col].astype(str),
-            errors='coerce'
-        )
-        df = df.dropna(subset=[date_col])  # remove invalid dates if any
-    elif date_col:
-        df['datetime'] = df[date_col]
-    else:
-        df['datetime'] = pd.NaT
-    
-    # ── Boolean columns ────────────────────────────────────────────────────────
-    bool_map = {
-        'Yes': True, 'YES': True, 'yes': True, 'Y': True,
-        'No': False, 'NO': False, 'no': False, 'N': False
-    }
-    
-    bool_columns = [
-        'belts', 'personal_injury', 'property_damage', 'commercial_license',
-        'commercial_vehicle', 'contributed_to_accident'
-        # add others if they appear later: 'fatal', 'hazmat', etc.
-    ]
-    
-    for col in bool_columns:
-        if col in df.columns:
-            df[col] = df[col].map(bool_map).fillna(False)
-        else:
-            print(f"Note: Boolean column '{col}' not found")
-    
-    # ── Feature engineering ────────────────────────────────────────────────────
-    if 'datetime' in df.columns and df['datetime'].notna().any():
-        df['hour'] = df['datetime'].dt.hour
-        df['day_of_week'] = df['datetime'].dt.day_name()
-        df['month'] = df['datetime'].dt.month
-        df['is_weekend'] = df['day_of_week'].isin(['Saturday', 'Sunday'])
-    else:
-        print("No valid datetime → skipping time-based features")
-    
-    # Violation grouping based on Description
-    if 'description' in df.columns:
-        def categorize_violation(text):
-            if pd.isna(text):
-                return "Unknown"
-            t = str(text).lower()
-            if 'speed' in t or 'exceeding' in t:
-                return "Speeding"
-            if 'red light' in t or 'traffic signal' in t:
-                return "Red Light / Signal"
-            if 'registration' in t or 'expired' in t and 'plate' in t:
-                return "Registration / Plate"
-            if 'license' in t or 'suspended' in t:
-                return "License / Suspended"
-            if 'seatbelt' in t or 'belt' in t or 'restrained' in t:
-                return "Seatbelt"
-            if 'stop sign' in t:
-                return "Stop Sign"
-            if 'alcohol' in t or 'influence' in t:
-                return "DUI / Alcohol"
-            return "Other"
-        
-        df['violation_group'] = df['description'].apply(categorize_violation)
-    
-    # ── Save cleaned version ──────────────────────────────────────────────────
-    output_file = "cleaned_traffic.parquet"
-    df.to_parquet(output_file, index=False, engine="pyarrow")
-    
-    print(f"\nSaved cleaned file → {output_file}")
-    print(f"Final rows: {len(df):,}")
-    print("Final columns:", df.columns.tolist()[:25])  # show first 25
-    
+    """Run the full pipeline and write out cleaned_traffic.parquet."""
+    df = load_raw_data()
+    df = normalize_column_names(df)
+    df = drop_duplicate_rows(df)
+    df = clean_boolean_columns(df)
+    df = clean_state_codes(df)
+    df = clean_vehicle_year(df)
+    df = standardize_make(df)
+    df = clean_vehicle_model(df)
+    df = engineer_features(df)
+    df = optimize_dtypes(df)
+
+    df.to_parquet(OUTPUT_FILE, index=False, engine="pyarrow")
+    print(f"\nSaved {len(df):,} cleaned rows -> {OUTPUT_FILE}")
     return df
 
 
