@@ -1,14 +1,9 @@
-"""Cleans and enriches the raw Montgomery County-style traffic violations export.
-
-Run directly to produce cleaned_traffic.parquet from raw_traffic.csv:
-    python clean_data.py
-
-Note on scope: this particular export does not include stop date/time,
-agency/location, geolocation, or search-related columns (they're part of
-the full public dataset this project is modeled on, but weren't present
-in raw_traffic.csv). Everything below only cleans what's actually here -
-see README.md for the full list of what that means for the dashboard.
-"""
+# Cleans and enriches the raw Montgomery County-style traffic violations export.
+# python clean_data.py -> cleaned_traffic.parquet
+#
+# raw_traffic.csv doesn't have stop date/time, agency/location, geo, or search
+# columns - they exist in the full public dataset but not this export. See
+# README.md for what that means for the dashboard.
 
 import sys
 
@@ -18,9 +13,8 @@ import pandas as pd
 RAW_FILE = "raw_traffic.csv"
 OUTPUT_FILE = "cleaned_traffic.parquet"
 
-# Yes/No style columns that exist in this export. The full dataset also has
-# Fatal, HAZMAT, Alcohol and Work Zone flags, but those columns never made it
-# into raw_traffic.csv, so they're left out here rather than faked.
+# yes/no columns in this export - Fatal/HAZMAT/Alcohol/Work Zone flags exist in
+# the full dataset but never made it into raw_traffic.csv
 BOOLEAN_COLUMNS = [
     "belts",
     "personal_injury",
@@ -32,15 +26,11 @@ BOOLEAN_COLUMNS = [
 
 STATE_COLUMNS = ["state", "driver_state", "dl_state"]
 
-# Codes seen in the data that aren't real jurisdictions - "XX" shows up as a
-# catch-all unknown and "US" is clearly a data entry mistake. Canadian
-# provinces (ON, QC, MB, ...) are left alone since those are legitimate
-# out-of-country drivers, not junk.
+# XX = catch-all unknown, US = data entry mistake. Leaving Canadian provinces
+# (ON, QC, MB...) alone, those are real out-of-country drivers.
 INVALID_STATE_CODES = {"XX", "US"}
 
-# Common abbreviations/misspellings of vehicle makes found in this export.
-# Not exhaustive - just the ones that show up often enough to matter for the
-# "top makes" chart in the dashboard.
+# not exhaustive, just the abbreviations that show up often enough to matter
 MAKE_ALIASES = {
     "TOYT": "TOYOTA",
     "HOND": "HONDA",
@@ -60,9 +50,8 @@ MAKE_ALIASES = {
 MIN_VEHICLE_YEAR = 1960
 MAX_VEHICLE_YEAR = 2025
 
-# Body-style shorthand that shows up in the Model column instead of an actual
-# model name - looks like officers fell back to this when they didn't know
-# the specific model. Not a real model, so it shouldn't win "most cited model".
+# body-style shorthand that ends up in the Model column instead of a real model
+# name (officer didn't know the specific model, probably) - null these out
 GENERIC_MODEL_CODES = {
     "4S", "2S", "4D", "4DR", "2D", "2DR", "4 DOOR", "2 DOOR",
     "SUV", "VN", "VAN", "SW", "TK", "TRUCK", "SU",
@@ -70,7 +59,6 @@ GENERIC_MODEL_CODES = {
 
 
 def load_raw_data(path=RAW_FILE):
-    """Read the raw CSV export. Bails out with a clear message if it's missing."""
     try:
         df = pd.read_csv(path, low_memory=False)
     except FileNotFoundError:
@@ -80,7 +68,7 @@ def load_raw_data(path=RAW_FILE):
 
 
 def normalize_column_names(df):
-    """lowercase_with_underscores instead of 'Personal.Injury' / 'Driver City'."""
+    # 'Personal.Injury' / 'Driver City' -> personal_injury / driver_city
     df.columns = (
         df.columns.str.strip()
         .str.lower()
@@ -91,9 +79,7 @@ def normalize_column_names(df):
 
 
 def drop_duplicate_rows(df):
-    """Full-row duplicates showed up in the raw export - most likely re-exported
-    or double-scanned records rather than two separate stops that happen to
-    match on every single field."""
+    # full-row dupes in the raw export, probably re-exported/double-scanned records
     before = len(df)
     df = df.drop_duplicates().reset_index(drop=True)
     removed = before - len(df)
@@ -103,12 +89,7 @@ def drop_duplicate_rows(df):
 
 
 def clean_boolean_columns(df):
-    """Map the Yes/No/Y/N text columns to real booleans.
-
-    Anything that isn't a recognized Yes/No spelling is left as missing
-    (NaN) rather than silently treated as False - a blank isn't the same
-    thing as a confirmed "no accident happened".
-    """
+    # unrecognized values stay NaN instead of False - blank != confirmed "no"
     yes_no_map = {
         "yes": True, "y": True,
         "no": False, "n": False,
@@ -127,7 +108,6 @@ def clean_boolean_columns(df):
 
 
 def clean_state_codes(df):
-    """Uppercase state/jurisdiction codes and null out the known junk values."""
     for col in STATE_COLUMNS:
         if col not in df.columns:
             continue
@@ -138,9 +118,7 @@ def clean_state_codes(df):
 
 
 def clean_vehicle_year(df):
-    """Vehicle model years outside a sane range (pre-1960 or newer than the
-    dataset itself) are almost certainly typos - e.g. a stray digit turning
-    2013 into 1013, or a placeholder like 0 / 9999 for "not entered"."""
+    # years outside a sane range are typos (2013 -> 1013) or placeholders (0, 9999)
     if "year" not in df.columns:
         return df
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
@@ -153,8 +131,7 @@ def clean_vehicle_year(df):
 
 
 def standardize_make(df):
-    """Collapse the obvious abbreviation duplicates (TOYT/TOYOTA, HOND/HONDA, ...)
-    so the "top makes" chart doesn't split one manufacturer across rows."""
+    # collapse TOYT/TOYOTA etc so the top-makes chart doesn't split one manufacturer
     if "make" not in df.columns:
         return df
     df["make"] = df["make"].astype(str).str.strip().str.upper()
@@ -163,10 +140,6 @@ def standardize_make(df):
 
 
 def clean_vehicle_model(df):
-    """Null out generic body-style codes (4S, TK, VAN, ...) so they don't
-    masquerade as a real model in the "most cited model" stats - a real
-    model name and a body-style shorthand shouldn't compete in the same
-    ranking."""
     if "model" not in df.columns:
         return df
     df["model"] = df["model"].astype(str).str.strip().str.upper()
@@ -175,10 +148,8 @@ def clean_vehicle_model(df):
 
 
 def categorize_violation(description):
-    """Bucket the free-text violation description into a handful of groups
-    used throughout the dashboard. Order matters here - e.g. we check for
-    "speed" before the more generic buckets so a description mentioning both
-    speeding and a plate issue still lands under Speeding."""
+    # order matters - speed check comes first so a description mentioning both
+    # speeding and a plate issue still lands under Speeding
     if pd.isna(description):
         return "Unknown"
 
@@ -202,10 +173,8 @@ def categorize_violation(description):
 
 
 def add_accident_severity(df):
-    """Roll the three accident-related flags into one ordinal severity label,
-    worst outcome wins. Rows missing all three flags stay Unknown instead of
-    being counted as "None" - we don't actually know what happened there.
-    """
+    # collapse the 3 accident flags into one severity label, worst outcome wins
+    # rows missing all three stay Unknown rather than "None"
     injury = df.get("personal_injury")
     damage = df.get("property_damage")
     contributed = df.get("contributed_to_accident")
@@ -230,14 +199,12 @@ def add_accident_severity(df):
 
 
 def engineer_features(df):
-    """Everything derived rather than read straight from the source columns."""
     if "description" in df.columns:
         df["violation_group"] = df["description"].apply(categorize_violation)
 
     df = add_accident_severity(df)
 
-    # Per-make violation counts - useful for the "which vehicles show up most"
-    # question without re-aggregating in the dashboard every time.
+    # so the dashboard doesn't have to re-aggregate this every time
     if "make" in df.columns:
         make_counts = df["make"].value_counts()
         df["make_violation_count"] = df["make"].map(make_counts)
@@ -246,8 +213,7 @@ def engineer_features(df):
 
 
 def optimize_dtypes(df):
-    """Low-cardinality text columns are stored as category dtype instead of
-    plain object strings - same values, a lot less memory on ~70k rows."""
+    # category dtype for low-cardinality columns, saves memory on ~70k rows
     categorical_candidates = [
         "state", "driver_state", "dl_state", "race", "gender", "vehicletype",
         "violation_type", "arrest_type", "violation_group", "accident_severity",
@@ -263,7 +229,6 @@ def optimize_dtypes(df):
 
 
 def clean_traffic_data():
-    """Run the full pipeline and write out cleaned_traffic.parquet."""
     df = load_raw_data()
     df = normalize_column_names(df)
     df = drop_duplicate_rows(df)

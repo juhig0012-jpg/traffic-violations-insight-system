@@ -1,17 +1,9 @@
-"""Exploratory analysis over cleaned_traffic.parquet.
-
-Run after clean_data.py:
-    python eda.py
-
-Produces:
-    eda_charts/*.png   - the charts referenced in EDA_REPORT.md
-    EDA_REPORT.md       - written summary with the actual numbers
-
-This only answers the EDA questions the data can actually support. The raw
-export has no stop date/time and no location/coordinates, so anything about
-hotspots, time-of-day, or weekday/month trends isn't in here - see the
-"What this data can't tell us" section at the bottom of the generated report.
-"""
+# Exploratory analysis over cleaned_traffic.parquet. Run after clean_data.py.
+# python eda.py -> eda_charts/*.png + EDA_REPORT.md
+#
+# No stop date/time or location in this export, so hotspot / time-of-day /
+# weekday trends aren't covered - see the report's "what this data can't
+# tell us" section.
 
 import os
 
@@ -23,8 +15,7 @@ DATA_FILE = "cleaned_traffic.parquet"
 CHART_DIR = "eda_charts"
 REPORT_FILE = "EDA_REPORT.md"
 
-# Same palette used in app.py, kept in one place so the static charts here and
-# the interactive dashboard don't drift apart.
+# same palette as app.py
 BLUE = "#2a78d6"
 CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 
@@ -119,8 +110,8 @@ def build_report(df, top_violations, top_vehicles, accident_rate, gender_counts)
     accident_total = int(df["contributed_to_accident"].sum())
     injury_total = int(df["personal_injury"].sum())
     damage_total = int(df["property_damage"].sum())
-    # make+model together, not two separate value_counts() - otherwise you can
-    # end up pairing the most common make with a model from a different make
+    # group make+model together, not separately - otherwise you'd pair the most
+    # common make with a model from a different make
     make_model_counts = df.dropna(subset=["make", "model"]).groupby(["make", "model"]).size()
     top_make, top_model = make_model_counts.idxmax()
 

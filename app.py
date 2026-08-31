@@ -1,10 +1,6 @@
-"""Streamlit dashboard for the cleaned traffic violations dataset.
-
-Run with:
-    streamlit run app.py
-
-Expects cleaned_traffic.parquet to already exist (produced by clean_data.py).
-"""
+# Streamlit dashboard for the cleaned traffic violations dataset.
+# streamlit run app.py
+# needs cleaned_traffic.parquet - run clean_data.py first if it's missing
 
 import pandas as pd
 import plotly.express as px
@@ -12,9 +8,7 @@ import streamlit as st
 
 DATA_FILE = "cleaned_traffic.parquet"
 
-# Same categorical order and blue sequential ramp used in eda.py, so a chart
-# doesn't mean something different depending on whether you're looking at the
-# static report or the live dashboard.
+# keep in sync with eda.py's palette
 CATEGORICAL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 BLUE_SCALE = [[0, "#cde2fb"], [1, "#0d366b"]]
 
@@ -41,8 +35,6 @@ def configure_page():
 
 @st.cache_data
 def load_data():
-    """Load the cleaned parquet file. Raises so the caller can show a
-    Streamlit-friendly error instead of a bare traceback."""
     df = pd.read_parquet(DATA_FILE)
     bool_cols = [
         "belts", "personal_injury", "property_damage",
@@ -55,8 +47,7 @@ def load_data():
 
 
 def render_sidebar_filters(df):
-    """Draws every filter widget and returns the selections as a dict of
-    column -> list of chosen values (empty list means "no filter applied")."""
+    # returns dict of column -> chosen values, empty list = no filter
     with st.sidebar:
         st.header("Filters")
 
@@ -106,9 +97,7 @@ def render_sidebar_filters(df):
 
 
 def reset_filters():
-    """Callback for the reset button - clears every filter widget's stored
-    state before Streamlit re-runs, so the multiselects actually go back to
-    empty instead of just triggering a no-op rerun."""
+    # clear widget state directly, otherwise the multiselects just no-op on rerun
     for key in FILTER_KEYS:
         widget_key = f"filter_{key}"
         if widget_key in st.session_state:
