@@ -2,6 +2,18 @@
 
 **Exploratory Data Analysis • Data Cleaning • Interactive Streamlit Dashboard**
 
+## What this project does
+
+Takes a raw, messy traffic-violations export (inconsistent state codes,
+misspelled vehicle makes, duplicate rows, free-text violation descriptions)
+and turns it into something usable: a cleaning pipeline that fixes those
+problems, a written EDA report with real charts, and an interactive
+dashboard where you can filter ~70,000 stops by violation type, state,
+vehicle type, gender, race, or arrest type and see the summary numbers and
+charts update live. It's built for anyone who wants to explore patterns in
+who gets stopped, for what, and in what kind of vehicle - a city
+transportation office, a researcher, or just someone curious about the data.
+
 Cleans a raw traffic violations export, engineers a few derived features, and
 serves the result through an interactive Streamlit dashboard plus a static
 EDA report with saved charts.
@@ -98,6 +110,29 @@ streamlit run app.py
 ```
 
 The dashboard opens at http://localhost:8501.
+
+## How to Use the Dashboard
+
+1. **Pick your filters in the sidebar** - Violation Group, Driver's State,
+   Vehicle Type, Gender, Race, and Arrest Type. Leaving a filter empty means
+   "don't filter on this" - it opens with Speeding/Registration-Plate/
+   License-Suspended and State=MD pre-selected so you're not staring at
+   every row on first load.
+2. **Read the summary tiles** at the top - total violations, how many
+   contributed to an accident, seatbelt violations, personal-injury cases,
+   and (below the tiles) the single most-cited make/model in your current
+   selection.
+3. **Expand the chart sections** - "Violation Categories & Patterns" is open
+   by default; "Demographics", "Vehicle Information", and "Enforcement &
+   Arrest" are collapsed, click to expand. Every chart updates to match
+   whatever filters are currently active.
+4. **Download the filtered slice** - the CSV button exports exactly the
+   rows matching your current filters, not the whole dataset.
+
+Try it: clear every filter except Vehicle Type = `10 - Transit Bus`, and
+compare the accident-contribution rate you see against the same rate for
+`02 - Automobile` - this is exactly the pattern flagged in the
+Recommendations section below.
 
 ## Recommendations
 
