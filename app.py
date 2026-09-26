@@ -1,6 +1,6 @@
-# Streamlit dashboard for the cleaned traffic violations dataset.
-# streamlit run app.py
-# needs cleaned_traffic.parquet - run clean_data.py first if it's missing
+# streamlit dashboard for the cleaned traffic violations dataset
+# run: streamlit run app.py
+# needs cleaned_traffic.parquet - run clean_data.py first if that's missing
 
 import pandas as pd
 import plotly.express as px
@@ -8,7 +8,7 @@ import streamlit as st
 
 DATA_FILE = "cleaned_traffic.parquet"
 
-# keep in sync with eda.py's palette
+# TODO: keep this in sync with eda.py's palette manually, kinda annoying
 CATEGORICAL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 BLUE_SCALE = [[0, "#cde2fb"], [1, "#0d366b"]]
 
@@ -47,7 +47,7 @@ def load_data():
 
 
 def render_sidebar_filters(df):
-    # returns dict of column -> chosen values, empty list = no filter
+    # returns a dict of column -> chosen values, empty list means no filter applied
     with st.sidebar:
         st.header("Filters")
 
@@ -97,7 +97,7 @@ def render_sidebar_filters(df):
 
 
 def reset_filters():
-    # clear widget state directly, otherwise the multiselects just no-op on rerun
+    # have to clear widget state directly here, otherwise the multiselects just no-op on rerun
     for key in FILTER_KEYS:
         widget_key = f"filter_{key}"
         if widget_key in st.session_state:

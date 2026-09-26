@@ -1,9 +1,9 @@
-# Exploratory analysis over cleaned_traffic.parquet. Run after clean_data.py.
+# exploratory analysis over cleaned_traffic.parquet - run this after clean_data.py
 # python eda.py -> eda_charts/*.png + EDA_REPORT.md
 #
-# No stop date/time or location in this export, so hotspot / time-of-day /
-# weekday trends aren't covered - see the report's "what this data can't
-# tell us" section.
+# heads up: no stop date/time or location in this export so hotspot / time-of-day
+# / weekday trends just aren't possible here, see "what this data can't tell us"
+# in the generated report
 
 import os
 
@@ -15,7 +15,7 @@ DATA_FILE = "cleaned_traffic.parquet"
 CHART_DIR = "eda_charts"
 REPORT_FILE = "EDA_REPORT.md"
 
-# same palette as app.py
+# same colors as app.py - keeping these in sync by hand for now, kinda annoying
 BLUE = "#2a78d6"
 CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 
@@ -110,8 +110,8 @@ def build_report(df, top_violations, top_vehicles, accident_rate, gender_counts)
     accident_total = int(df["contributed_to_accident"].sum())
     injury_total = int(df["personal_injury"].sum())
     damage_total = int(df["property_damage"].sum())
-    # group make+model together, not separately - otherwise you'd pair the most
-    # common make with a model from a different make
+    # grouping make+model together, not separately - otherwise you could end up
+    # pairing the most common make with some model from a totally different make
     make_model_counts = df.dropna(subset=["make", "model"]).groupby(["make", "model"]).size()
     top_make, top_model = make_model_counts.idxmax()
 

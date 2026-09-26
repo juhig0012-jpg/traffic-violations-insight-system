@@ -1,9 +1,9 @@
-# Cleans and enriches the raw Montgomery County-style traffic violations export.
-# python clean_data.py -> cleaned_traffic.parquet
+# cleans + enriches the raw traffic violations export (Montgomery County style)
+# run: python clean_data.py -> spits out cleaned_traffic.parquet
 #
-# raw_traffic.csv doesn't have stop date/time, agency/location, geo, or search
-# columns - they exist in the full public dataset but not this export. See
-# README.md for what that means for the dashboard.
+# note: raw_traffic.csv doesn't have stop date/time, agency/location, geo, or
+# search columns. they're in the full public dataset but just not in this
+# trimmed export - see README for what that means for the dashboard
 
 import sys
 
@@ -13,8 +13,8 @@ import pandas as pd
 RAW_FILE = "raw_traffic.csv"
 OUTPUT_FILE = "cleaned_traffic.parquet"
 
-# yes/no columns in this export - Fatal/HAZMAT/Alcohol/Work Zone flags exist in
-# the full dataset but never made it into raw_traffic.csv
+# yes/no cols in this export. Fatal/HAZMAT/Alcohol/Work Zone flags exist in the
+# full dataset but never made it into raw_traffic.csv
 BOOLEAN_COLUMNS = [
     "belts",
     "personal_injury",
@@ -26,11 +26,11 @@ BOOLEAN_COLUMNS = [
 
 STATE_COLUMNS = ["state", "driver_state", "dl_state"]
 
-# XX = catch-all unknown, US = data entry mistake. Leaving Canadian provinces
-# (ON, QC, MB...) alone, those are real out-of-country drivers.
+# XX = unknown catch-all, US = data entry mistake basically. leaving Canadian
+# provinces (ON, QC, MB...) alone since those are legit out-of-country drivers
 INVALID_STATE_CODES = {"XX", "US"}
 
-# not exhaustive, just the abbreviations that show up often enough to matter
+# not exhaustive - just the abbreviations that kept showing up when I checked value_counts
 MAKE_ALIASES = {
     "TOYT": "TOYOTA",
     "HOND": "HONDA",
@@ -50,8 +50,8 @@ MAKE_ALIASES = {
 MIN_VEHICLE_YEAR = 1960
 MAX_VEHICLE_YEAR = 2025
 
-# body-style shorthand that ends up in the Model column instead of a real model
-# name (officer didn't know the specific model, probably) - null these out
+# body-style shorthand that ends up in Model instead of an actual model name
+# (officer probably didn't know it) - null these out
 GENERIC_MODEL_CODES = {
     "4S", "2S", "4D", "4DR", "2D", "2DR", "4 DOOR", "2 DOOR",
     "SUV", "VN", "VAN", "SW", "TK", "TRUCK", "SU",
@@ -68,7 +68,7 @@ def load_raw_data(path=RAW_FILE):
 
 
 def normalize_column_names(df):
-    # 'Personal.Injury' / 'Driver City' -> personal_injury / driver_city
+    # e.g. 'Personal.Injury' / 'Driver City' -> personal_injury / driver_city
     df.columns = (
         df.columns.str.strip()
         .str.lower()
@@ -79,7 +79,7 @@ def normalize_column_names(df):
 
 
 def drop_duplicate_rows(df):
-    # full-row dupes in the raw export, probably re-exported/double-scanned records
+    # there are full-row dupes in the raw export - probably re-exported or double scanned records
     before = len(df)
     df = df.drop_duplicates().reset_index(drop=True)
     removed = before - len(df)
@@ -89,7 +89,7 @@ def drop_duplicate_rows(df):
 
 
 def clean_boolean_columns(df):
-    # unrecognized values stay NaN instead of False - blank != confirmed "no"
+    # leaving unrecognized values as NaN instead of False, blank isn't the same as a confirmed "no"
     yes_no_map = {
         "yes": True, "y": True,
         "no": False, "n": False,
@@ -118,7 +118,7 @@ def clean_state_codes(df):
 
 
 def clean_vehicle_year(df):
-    # years outside a sane range are typos (2013 -> 1013) or placeholders (0, 9999)
+    # anything outside a sane range is either a typo (2013 -> 1013) or a placeholder like 0/9999
     if "year" not in df.columns:
         return df
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
@@ -131,7 +131,7 @@ def clean_vehicle_year(df):
 
 
 def standardize_make(df):
-    # collapse TOYT/TOYOTA etc so the top-makes chart doesn't split one manufacturer
+    # collapsing TOYT/TOYOTA etc so the top-makes chart doesn't split one manufacturer into two bars
     if "make" not in df.columns:
         return df
     df["make"] = df["make"].astype(str).str.strip().str.upper()
@@ -148,8 +148,8 @@ def clean_vehicle_model(df):
 
 
 def categorize_violation(description):
-    # order matters - speed check comes first so a description mentioning both
-    # speeding and a plate issue still lands under Speeding
+    # order matters here - speeding check goes first so a description that
+    # mentions both speeding and a plate issue still lands under Speeding
     if pd.isna(description):
         return "Unknown"
 
@@ -173,8 +173,8 @@ def categorize_violation(description):
 
 
 def add_accident_severity(df):
-    # collapse the 3 accident flags into one severity label, worst outcome wins
-    # rows missing all three stay Unknown rather than "None"
+    # collapsing the 3 accident flags into one severity label, worst outcome wins
+    # rows missing all three stay Unknown, not "None" - we just don't know for those
     injury = df.get("personal_injury")
     damage = df.get("property_damage")
     contributed = df.get("contributed_to_accident")
@@ -204,7 +204,7 @@ def engineer_features(df):
 
     df = add_accident_severity(df)
 
-    # so the dashboard doesn't have to re-aggregate this every time
+    # precomputing so the dashboard isn't re-aggregating this on every rerun
     if "make" in df.columns:
         make_counts = df["make"].value_counts()
         df["make_violation_count"] = df["make"].map(make_counts)
@@ -213,7 +213,7 @@ def engineer_features(df):
 
 
 def optimize_dtypes(df):
-    # category dtype for low-cardinality columns, saves memory on ~70k rows
+    # category dtype for the low-cardinality cols, saves a bit of memory on ~70k rows
     categorical_candidates = [
         "state", "driver_state", "dl_state", "race", "gender", "vehicletype",
         "violation_type", "arrest_type", "violation_group", "accident_severity",
@@ -223,7 +223,7 @@ def optimize_dtypes(df):
             df[col] = df[col].astype("category")
 
     if "year" in df.columns:
-        df["year"] = df["year"].astype("Int32")  # nullable int, keeps NaNs
+        df["year"] = df["year"].astype("Int32")  # nullable int so NaNs survive
 
     return df
 
